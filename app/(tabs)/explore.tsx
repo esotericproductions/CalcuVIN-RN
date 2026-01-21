@@ -12,13 +12,22 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from "react-native";
 
 type VinField = { label: string; value: string };
 
 const RECENTS_KEY = "vin_recents_v1";
 const MAX_RECENTS = 10;
+
+const _origWarn = console.warn;
+console.warn = (...args: any[]) => {
+  const msg = String(args?.[0] ?? "");
+  if (msg.includes("CoreGraphics") && msg.includes("NaN")) {
+    console.log("⚠️ CoreGraphics NaN warning args:", args);
+  }
+  _origWarn(...args);
+};
 
 // VIN rules: 17 chars; letters I, O, Q not allowed.
 function normalizeVin(input: string) {
@@ -438,3 +447,18 @@ function extractVinFromText(text: string): string | null {
 
   return null;
 }
+
+export const colors = {
+  light: {
+    background: "#FFFFFF",
+    text: "#000000",
+    secondaryText: "#555555",
+    card: "#F2F2F2",
+  },
+  dark: {
+    background: "#000000",
+    text: "#FFFFFF",
+    secondaryText: "#BBBBBB",
+    card: "#1C1C1E",
+  },
+};
