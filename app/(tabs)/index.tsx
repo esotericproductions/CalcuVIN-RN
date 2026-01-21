@@ -1,98 +1,294 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useMemo, useReducer } from "react";
+import { Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+type Op = "+" | "−" | "×" | "÷";
+type Key =
+  | "C"
+  | "±"
+  | "%"
+  | "÷"
+  | "7"
+  | "8"
+  | "9"
+  | "×"
+  | "4"
+  | "5"
+  | "6"
+  | "−"
+  | "1"
+  | "2"
+  | "3"
+  | "+"
+  | "0"
+  | "."
+  | "=";
 
-export default function HomeScreen() {
+type State = {
+  display: string; // what you see
+  acc: number | null; // accumulator (previous value)
+  op: Op | null; // pending operation
+  entering: boolean; // are we typing a new number?
+  justEvaluated: boolean; // last key was '='
+};
+
+type Action =
+  | { type: "DIGIT"; digit: string }
+  | { type: "DOT" }
+  | { type: "CLEAR" }
+  | { type: "TOGGLE_SIGN" }
+  | { type: "PERCENT" }
+  | { type: "OP"; op: Op }
+  | { type: "EQUALS" };
+
+const initialState: State = {
+  display: "0",
+  acc: null,
+  op: null,
+  entering: true,
+  justEvaluated: false,
+};
+
+function toNumber(display: string): number {
+  const n = Number(display);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatNumber(n: number): string {
+  if (!Number.isFinite(n)) return "Error";
+  // Avoid showing "-0"
+  if (Object.is(n, -0)) n = 0;
+  // Trim long float tails a bit
+  const s = String(n);
+  if (s.includes("e")) return s;
+  if (s.includes(".")) {
+    // limit to ~10 decimals then trim
+    const fixed = n.toFixed(10).replace(/\.?0+$/, "");
+    return fixed;
+  }
+  return s;
+}
+
+function applyOp(a: number, b: number, op: Op): number {
+  switch (op) {
+    case "+":
+      return a + b;
+    case "−":
+      return a - b;
+    case "×":
+      return a * b;
+    case "÷":
+      return b === 0 ? NaN : a / b;
+  }
+}
+
+function reducer(state: State, action: Action): State {
+  const cur = toNumber(state.display);
+
+  switch (action.type) {
+    case "CLEAR":
+      return { ...initialState };
+
+    case "DIGIT": {
+      // If we just evaluated, starting digits begins a new entry
+      const startFresh =
+        state.justEvaluated && state.op === null && state.acc === null;
+      if (!state.entering || startFresh) {
+        return {
+          ...state,
+          display: action.digit,
+          entering: true,
+          justEvaluated: false,
+        };
+      }
+      // entering current number
+      if (state.display === "0") {
+        return { ...state, display: action.digit, justEvaluated: false };
+      }
+      return {
+        ...state,
+        display: state.display + action.digit,
+        justEvaluated: false,
+      };
+    }
+
+    case "DOT": {
+      const startFresh =
+        state.justEvaluated && state.op === null && state.acc === null;
+      if (!state.entering || startFresh) {
+        return {
+          ...state,
+          display: "0.",
+          entering: true,
+          justEvaluated: false,
+        };
+      }
+      if (state.display.includes(".")) return state;
+      return { ...state, display: state.display + ".", justEvaluated: false };
+    }
+
+    case "TOGGLE_SIGN": {
+      if (state.display === "0") return state;
+      const n = -cur;
+      return { ...state, display: formatNumber(n), justEvaluated: false };
+    }
+
+    case "PERCENT": {
+      // Common mobile behavior: percent turns current entry into /100.
+      const n = cur / 100;
+      return { ...state, display: formatNumber(n), justEvaluated: false };
+    }
+
+    case "OP": {
+      // If we have a pending op and we were entering, apply it now (immediate-execution)
+      if (state.op && state.acc !== null && state.entering) {
+        const nextAcc = applyOp(state.acc, cur, state.op);
+        return {
+          display: formatNumber(nextAcc),
+          acc: nextAcc,
+          op: action.op,
+          entering: false,
+          justEvaluated: false,
+        };
+      }
+
+      // No pending op yet: move current into accumulator
+      const nextAcc = state.acc ?? cur;
+      return {
+        ...state,
+        acc: nextAcc,
+        op: action.op,
+        entering: false,
+        justEvaluated: false,
+      };
+    }
+
+    case "EQUALS": {
+      if (!state.op || state.acc === null) {
+        return { ...state, justEvaluated: true, entering: false };
+      }
+
+      const result = applyOp(state.acc, cur, state.op);
+      return {
+        display: formatNumber(result),
+        acc: null,
+        op: null,
+        entering: false,
+        justEvaluated: true,
+      };
+    }
+  }
+}
+
+export default function CalculatorScreen() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+
+  const keys: Key[][] = useMemo(
+    () => [
+      ["C", "±", "%", "÷"],
+      ["7", "8", "9", "×"],
+      ["4", "5", "6", "−"],
+      ["1", "2", "3", "+"],
+      ["0", ".", "="],
+    ],
+    [],
+  );
+
+  function onKeyPress(k: Key) {
+    if (k === "C") return dispatch({ type: "CLEAR" });
+    if (k === "±") return dispatch({ type: "TOGGLE_SIGN" });
+    if (k === "%") return dispatch({ type: "PERCENT" });
+    if (k === ".") return dispatch({ type: "DOT" });
+    if (k === "=") return dispatch({ type: "EQUALS" });
+
+    if (k === "+" || k === "−" || k === "×" || k === "÷") {
+      return dispatch({ type: "OP", op: k });
+    }
+
+    // digits
+    return dispatch({ type: "DIGIT", digit: k });
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.container}>
+        <View style={styles.display}>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            style={styles.displayText}
+          >
+            {state.display}
+          </Text>
+        </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        <View style={styles.pad}>
+          {keys.map((row, rowIdx) => (
+            <View key={rowIdx} style={styles.row}>
+              {row.map((k) => (
+                <CalcKey
+                  key={k}
+                  label={k}
+                  onPress={() => onKeyPress(k)}
+                  wide={k === "0"}
+                />
+              ))}
+            </View>
+          ))}
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function CalcKey({
+  label,
+  onPress,
+  wide,
+}: {
+  label: string;
+  onPress: () => void;
+  wide?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.key,
+        wide && styles.keyWide,
+        pressed && styles.keyPressed,
+      ]}
+    >
+      <Text style={styles.keyText}>{label}</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  safe: { flex: 1 },
+  container: { flex: 1, padding: 12, gap: 12 },
+
+  display: {
+    flex: 1,
+    justifyContent: "flex-end",
+    alignItems: "flex-end",
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: "#111",
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  displayText: { color: "white", fontSize: 64, fontWeight: "600" },
+
+  pad: { gap: 10 },
+  row: { flexDirection: "row", gap: 10 },
+
+  key: {
+    flex: 1,
+    height: 72,
+    borderRadius: 18,
+    backgroundColor: "#222",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+  keyWide: { flex: 2.07 },
+  keyPressed: { opacity: 0.6 },
+  keyText: { color: "white", fontSize: 26, fontWeight: "600" },
 });
